@@ -1,6 +1,6 @@
 module github.com/rancher/sbombastic
 
-go 1.24.4
+go 1.25.1
 
 godebug default=go1.23
 
