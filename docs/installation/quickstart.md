@@ -14,6 +14,7 @@ This guide will walk you through the following steps:
 Before deployment, you need to prepare the following:
 
 - A Kubernetes cluster (you can simply run a [kind](https://kind.sigs.k8s.io/) cluster)
+- A [default Storage Class](https://kubernetes.io/docs/concepts/storage/storage-classes/#default-storageclass) defined inside of the cluster
 - `helm` installed locally
 - `kubectl` installed locally
 - `cert-manager` installed in the cluster
@@ -70,6 +71,24 @@ helm install sbomscanner kubewarden/sbomscanner \
   --create-namespace \
   --wait
 ```
+
+> **TIP:**
+>
+> By default, the installation of SBOMscanner is configured to be highly available.
+> If you want to save on resources, you can reduce the number of replicas to the minimum:
+>
+> ```bash
+> helm install sbomscanner kubewarden/sbomscanner \
+>   --namespace sbomscanner \
+>   --create-namespace \
+>   --set controller.replicas=1 \
+>   --set storage.replicas=1 \
+>   --set storage.postgres.cnpg.instances=1 \
+>   --set worker.replicas=1 \
+>   --wait
+> ```
+>
+> This configuration is suitable for development environments where high availability is not required.
 
 ### Verify the Deployment
 
