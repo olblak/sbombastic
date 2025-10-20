@@ -14,6 +14,7 @@ This guide will walk you through the following steps:
 Before deployment, you need to prepare the following:
 
 - A Kubernetes cluster (you can simply run a [kind](https://kind.sigs.k8s.io/) cluster)
+- A [default Storage Class](https://kubernetes.io/docs/concepts/storage/storage-classes/#default-storageclass) defined inside of the cluster
 - `helm` installed locally
 - `kubectl` installed locally
 - `cert-manager` installed in the cluster
