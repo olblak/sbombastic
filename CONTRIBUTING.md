@@ -86,3 +86,13 @@ Unit tests for other packages are in their respective directories.
 **E2E Tests**
 End-to-end tests are in the `test/e2e` package using the [e2e-framework](https://github.com/kubernetes-sigs/e2e-framework) to test against real Kubernetes clusters.
 You'll need [Kind](https://kind.sigs.k8s.io/) installed to create local test clusters.
+
+## Update fixtures
+
+From time to time, you may need to update the test fixtures.
+
+Update SBOM fixtures (requires `trivy`)
+
+```shell
+hack/update-sbom-fixtures.sh test/fixtures/
+```
