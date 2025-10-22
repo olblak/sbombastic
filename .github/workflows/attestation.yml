@@ -68,41 +68,44 @@ jobs:
                         | select(.annotations["in-toto.io/predicate-type"] == "https://slsa.dev/provenance/v0.2")
                         | .digest')
           echo "PROVENANCE_DIGEST=${DIGEST}" >> "$GITHUB_ENV"
-      - name: Sign provenance manifest
-        run: |
-          cosign sign --yes \
-          ghcr.io/${{github.repository_owner}}/sbomscanner/${{ inputs.component }}@${{ env.PROVENANCE_DIGEST}}
-          cosign verify \
-            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            --certificate-identity="https://github.com/${{github.repository_owner}}/sbomscanner/.github/workflows/attestation.yml@${{ github.ref }}" \
-            ghcr.io/${{github.repository_owner}}/sbomscanner/${{ inputs.component }}@${{ env.PROVENANCE_DIGEST}}
       - name: Find SBOM manifest layer digest
         run: |
           set -e
           DIGEST=$(crane manifest ghcr.io/${{github.repository_owner}}/sbomscanner/${{ inputs.component }}@${{ env.ATTESTATION_MANIFEST_DIGEST}} |  \
             jq '.layers | map(select(.annotations["in-toto.io/predicate-type"] == "https://spdx.dev/Document")) | map(.digest) | join(" ")')
           echo "SBOM_DIGEST=${DIGEST}" >> "$GITHUB_ENV"
+
+      # We need to upload provenance and SBOM files, plus their signatures under the GitHub Release page.
+      # Moreover, the files have to be named in a certain way.
+      # This is required by [ossf](https://github.com/ossf/scorecard/blob/main/docs/checks.md#signed-releases)
       - name: Download provenance and SBOM files
         run: |
           set -e
           crane blob ghcr.io/${{github.repository_owner}}/sbomscanner/${{ inputs.component }}@${{ env.PROVENANCE_DIGEST}} \
-            > SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-provenance.json
-          sha256sum SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-provenance.json \
-            >> SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-checksum.txt
+            > SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-provenance.intoto.jsonl
           crane blob ghcr.io/${{github.repository_owner}}/sbomscanner/${{ inputs.component }}@${{ env.SBOM_DIGEST}} \
             > SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-sbom.json
-          sha256sum SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-sbom.json \
-            >> SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-checksum.txt
-      - name: Sign checksum file
+      - name: Sign provenance and SBOM files
         run: |
+          set -e
           cosign sign-blob --yes \
-            --bundle SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-checksum-cosign.bundle \
-            SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-checksum.txt
+            --bundle SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-provenance.intoto.jsonl.bundle.sigstore \
+            SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-provenance.intoto.jsonl
           cosign verify-blob \
-            --bundle SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-checksum-cosign.bundle \
+            --bundle SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-provenance.intoto.jsonl.bundle.sigstore \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
             --certificate-identity="https://github.com/${{github.repository_owner}}/sbomscanner/.github/workflows/attestation.yml@${{ github.ref }}" \
-            SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-checksum.txt
+            SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-provenance.intoto.jsonl
+
+          cosign sign-blob --yes \
+            --bundle SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-sbom.json.bundle.sigstore \
+            SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-sbom.json
+          cosign verify-blob \
+            --bundle SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-sbom.json.bundle.sigstore \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --certificate-identity="https://github.com/${{github.repository_owner}}/sbomscanner/.github/workflows/attestation.yml@${{ github.ref }}" \
+            SBOMscanner-${{ inputs.component }}-attestation-${{ inputs.arch }}-sbom.json
+
       - name: Upload SBOMs as artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
