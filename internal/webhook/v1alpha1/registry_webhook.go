@@ -156,6 +156,18 @@ func validateRepositories(registry *v1alpha1.Registry) error {
 	return nil
 }
 
+func validatePlatforms(registry *v1alpha1.Registry) error {
+	if registry.Spec.Platforms == nil {
+		return nil
+	}
+	for _, platform := range registry.Spec.Platforms {
+		if err := validatePlatform(platform); err != nil {
+			return fmt.Errorf("%s is not an allowed platform: %w", platform.String(), err)
+		}
+	}
+	return nil
+}
+
 func validateRegistry(registry *v1alpha1.Registry) field.ErrorList {
 	var allErrs field.ErrorList
 
@@ -172,6 +184,10 @@ func validateRegistry(registry *v1alpha1.Registry) field.ErrorList {
 	if err := validateRepositories(registry); err != nil {
 		fieldPath := field.NewPath("spec").Child("repositories")
 		allErrs = append(allErrs, field.Invalid(fieldPath, registry.Spec.Repositories, err.Error()))
+	}
+	if err := validatePlatforms(registry); err != nil {
+		filepath := field.NewPath("spec").Child("platforms")
+		allErrs = append(allErrs, field.Invalid(filepath, registry.Spec.Platforms, err.Error()))
 	}
 
 	return allErrs
