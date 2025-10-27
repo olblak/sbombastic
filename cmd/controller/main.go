@@ -76,7 +76,7 @@ func parseFlags() Config {
 	flag.StringVar(&cfg.NatsURL, "nats-url", "localhost:4222", "The URL of the NATS server")
 	flag.StringVar(&cfg.NatsCertFile, "nats-cert-file", "/nats/tls/tls.crt", "The path to the NATS client certificate.")
 	flag.StringVar(&cfg.NatsKeyFile, "nats-key-file", "/nats/tls/tls.key", "The path to the NATS client key.")
-	flag.StringVar(&cfg.NatsCAFile, "nats-ca-fil", "/nats/tls/ca.crt", "The path to the NATS CA certificate.")
+	flag.StringVar(&cfg.NatsCAFile, "nats-ca-file", "/nats/tls/ca.crt", "The path to the NATS CA certificate.")
 	flag.StringVar(&cfg.LogLevel, "log-level", slog.LevelInfo.String(), "Log level")
 
 	flag.Parse()
