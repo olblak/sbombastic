@@ -72,6 +72,7 @@ func main() {
 		cancel()
 	}()
 
+	config := ctrl.GetConfigOrDie()
 	natsOpts := []nats.Option{
 		nats.RootCAs(natsCAFile),
 		nats.ClientCert(natsCertFile, natsKeyFile),
@@ -80,8 +81,12 @@ func main() {
 	if init {
 		logger = logger.With("task", "init")
 
-		err = cmdutil.WaitForJetStream(ctx, natsURL, natsOpts, logger)
-		if err != nil {
+		if err := cmdutil.WaitForStorageTypes(ctx, config, logger); err != nil {
+			logger.Error("Error waiting for storage types", "error", err)
+			os.Exit(1)
+		}
+
+		if err := cmdutil.WaitForJetStream(ctx, natsURL, natsOpts, logger); err != nil {
 			logger.Error("Error waiting for JetStream", "error", err)
 			os.Exit(1)
 		}
@@ -104,7 +109,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	config := ctrl.GetConfigOrDie()
 	scheme := scheme.Scheme
 	if err = v1alpha1.AddToScheme(scheme); err != nil {
 		logger.Error("Error adding v1alpha1 to scheme", "error", err)
