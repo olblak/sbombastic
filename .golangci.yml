@@ -467,6 +467,13 @@ linters:
         linters:
           - unparam
         text: "result 0.*is always nil"
+      # Disable cyclop, funlen and gocognit for main.go files
+      # main functions are often long by nature
+      - path: 'cmd/.*main\.go'
+        linters:
+          - cyclop
+          - funlen
+          - gocognit
       - path: '_test\.go'
         linters:
           - bodyclose
