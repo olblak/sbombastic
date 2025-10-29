@@ -12,6 +12,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
 	storagev1alpha1 "github.com/kubewarden/sbomscanner/api/storage/v1alpha1"
 	"github.com/kubewarden/sbomscanner/api/v1alpha1"
@@ -144,9 +145,40 @@ func main() {
 		os.Exit(1)
 	}
 
+	healthServer := runHealthServer(logger)
+
 	err = subscriber.Run(ctx)
 	if err != nil {
 		logger.Error("Error running worker subscriber", "error", err)
 		os.Exit(1)
 	}
+
+	logger.Debug("Shutting down health server")
+	if err := healthServer.Close(); err != nil {
+		logger.Error("Error shutting down health check server", "error", err)
+		os.Exit(1)
+	}
+}
+
+func runHealthServer(logger *slog.Logger) *http.Server {
+	handler := &healthz.Handler{}
+
+	mux := http.NewServeMux()
+	mux.Handle("/livez/", http.StripPrefix("/livez", handler))
+	mux.Handle("/readyz/", http.StripPrefix("/readyz", handler))
+
+	server := &http.Server{
+		Addr:        ":8081",
+		Handler:     mux,
+		ReadTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		logger.Info("Starting health check server", "addr", ":8081")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("Health check server error", "error", err)
+		}
+	}()
+
+	return server
 }
