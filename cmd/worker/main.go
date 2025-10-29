@@ -24,15 +24,16 @@ import (
 	k8sscheme "k8s.io/client-go/kubernetes/scheme"
 )
 
-func main() { //nolint:funlen // This function is intentionally long to keep the main logic together.
+func main() {
 	var natsURL string
 	var natsCertFile string
 	var natsKeyFile string
 	var natsCAFile string
-	var logLevel string
+	var runDir string
 	var trivyDBRepository string
 	var trivyJavaDBRepository string
-	var runDir string
+	var init bool
+	var logLevel string
 
 	flag.StringVar(&natsURL, "nats-url", "localhost:4222", "The URL of the NATS server.")
 	flag.StringVar(&natsCertFile, "nats-cert-file", "/nats/tls/tls.crt", "The path to the NATS client certificate.")
@@ -41,6 +42,7 @@ func main() { //nolint:funlen // This function is intentionally long to keep the
 	flag.StringVar(&runDir, "run-dir", "/var/run/worker", "Directory to store temporary files.")
 	flag.StringVar(&trivyDBRepository, "trivy-db-repository", "public.ecr.aws/aquasecurity/trivy-db", "OCI repository to retrieve trivy-db.")
 	flag.StringVar(&trivyJavaDBRepository, "trivy-java-db-repository", "public.ecr.aws/aquasecurity/trivy-java-db", "OCI repository to retrieve trivy-java-db.")
+	flag.BoolVar(&init, "init", false, "Run initialization tasks and exit.")
 	flag.StringVar(&logLevel, "log-level", slog.LevelInfo.String(), "Log level.")
 	flag.Parse()
 
@@ -69,6 +71,38 @@ func main() { //nolint:funlen // This function is intentionally long to keep the
 		cancel()
 	}()
 
+	natsOpts := []nats.Option{
+		nats.RootCAs(natsCAFile),
+		nats.ClientCert(natsCertFile, natsKeyFile),
+	}
+
+	if init {
+		logger = logger.With("task", "init")
+
+		err = cmdutil.WaitForJetStream(ctx, natsURL, natsOpts, logger)
+		if err != nil {
+			logger.Error("Error waiting for JetStream", "error", err)
+			os.Exit(1)
+		}
+
+		logger.Info("Initialization tasks completed successfully.")
+		os.Exit(0)
+	}
+
+	nc, err := nats.Connect(natsURL,
+		natsOpts...,
+	)
+	if err != nil {
+		logger.Error("Unable to connect to NATS server", "error", err, "natsURL", natsURL)
+		os.Exit(1)
+	}
+
+	publisher, err := messaging.NewNatsPublisher(ctx, nc, logger)
+	if err != nil {
+		logger.Error("Error creating NATS publisher", "error", err)
+		os.Exit(1)
+	}
+
 	config := ctrl.GetConfigOrDie()
 	scheme := scheme.Scheme
 	if err = v1alpha1.AddToScheme(scheme); err != nil {
@@ -90,22 +124,6 @@ func main() { //nolint:funlen // This function is intentionally long to keep the
 	}
 	registryClientFactory := func(transport http.RoundTripper) registry.Client {
 		return registry.NewClient(transport, logger)
-	}
-
-	nc, err := nats.Connect(natsURL,
-		nats.RetryOnFailedConnect(true),
-		nats.RootCAs(natsCAFile),
-		nats.ClientCert(natsCertFile, natsKeyFile),
-	)
-	if err != nil {
-		logger.Error("Unable to connect to NATS server", "error", err, "natsURL", natsURL)
-		os.Exit(1)
-	}
-
-	publisher, err := messaging.NewNatsPublisher(ctx, nc, logger)
-	if err != nil {
-		logger.Error("Error creating NATS publisher", "error", err)
-		os.Exit(1)
 	}
 
 	registry := messaging.HandlerRegistry{
