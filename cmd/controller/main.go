@@ -21,14 +21,19 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/nats-io/nats.go"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
-	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,14 +42,12 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/go-logr/logr"
 	storagev1alpha1 "github.com/kubewarden/sbomscanner/api/storage/v1alpha1"
 	"github.com/kubewarden/sbomscanner/api/v1alpha1"
 	"github.com/kubewarden/sbomscanner/internal/cmdutil"
 	"github.com/kubewarden/sbomscanner/internal/controller"
 	"github.com/kubewarden/sbomscanner/internal/messaging"
 	webhookv1alpha1 "github.com/kubewarden/sbomscanner/internal/webhook/v1alpha1"
-	"github.com/nats-io/nats.go"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -58,11 +61,13 @@ type Config struct {
 	NatsCertFile         string
 	NatsKeyFile          string
 	NatsCAFile           string
+	Init                 bool
 	LogLevel             string
 }
 
 func parseFlags() Config {
 	var cfg Config
+
 	flag.StringVar(&cfg.MetricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&cfg.ProbeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -77,13 +82,13 @@ func parseFlags() Config {
 	flag.StringVar(&cfg.NatsCertFile, "nats-cert-file", "/nats/tls/tls.crt", "The path to the NATS client certificate.")
 	flag.StringVar(&cfg.NatsKeyFile, "nats-key-file", "/nats/tls/tls.key", "The path to the NATS client key.")
 	flag.StringVar(&cfg.NatsCAFile, "nats-ca-file", "/nats/tls/ca.crt", "The path to the NATS CA certificate.")
+	flag.BoolVar(&cfg.Init, "init", false, "Run initialization tasks and exit.")
 	flag.StringVar(&cfg.LogLevel, "log-level", slog.LevelInfo.String(), "Log level")
 
 	flag.Parse()
 	return cfg
 }
 
-//nolint:funlen // TODO: refactor to reduce function length
 func main() {
 	var tlsOpts []func(*tls.Config)
 	cfg := parseFlags()
@@ -157,6 +162,43 @@ func main() {
 
 	// +kubebuilder:scaffold:scheme
 
+	signalHandler := ctrl.SetupSignalHandler()
+
+	natsOpts := []nats.Option{
+		nats.RootCAs(cfg.NatsCAFile),
+		nats.ClientCert(cfg.NatsCertFile, cfg.NatsKeyFile),
+	}
+
+	// If the init flag is set, run initialization tasks and exit.
+	if cfg.Init {
+		slogger = slogger.With("task", "init")
+
+		if err := cmdutil.WaitForStorageTypes(signalHandler, ctrl.GetConfigOrDie(), slogger); err != nil {
+			slogger.Error("Storage types are not available.", "error", err)
+			os.Exit(1)
+		}
+
+		if err := cmdutil.WaitForJetStream(signalHandler, cfg.NatsURL, natsOpts, slogger); err != nil {
+			slogger.Error("JetStream is not available.", "error", err)
+			os.Exit(1)
+		}
+
+		slogger.Info("Initialization tasks completed successfully.")
+		os.Exit(0)
+	}
+
+	nc, err := nats.Connect(cfg.NatsURL, natsOpts...)
+	if err != nil {
+		setupLog.Error(err, "unable to connect to NATS server", "natsURL", cfg.NatsURL)
+		os.Exit(1)
+	}
+
+	publisher, err := messaging.NewNatsPublisher(signalHandler, nc, slogger)
+	if err != nil {
+		setupLog.Error(err, "unable to create NATS publisher")
+		os.Exit(1)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
@@ -175,6 +217,10 @@ func main() {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
+		NewCache: func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
+			time.Sleep(20 * time.Second)
+			return cache.New(config, opts)
+		},
 		Cache: cache.Options{
 			DefaultTransform: cache.TransformStripManagedFields(),
 			ByObject: map[client.Object]cache.ByObject{
@@ -207,24 +253,6 @@ func main() {
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
-	}
-
-	signalHandler := ctrl.SetupSignalHandler()
-
-	nc, err := nats.Connect(cfg.NatsURL,
-		nats.RetryOnFailedConnect(true),
-		nats.RootCAs(cfg.NatsCAFile),
-		nats.ClientCert(cfg.NatsCertFile, cfg.NatsKeyFile),
-	)
-	if err != nil {
-		setupLog.Error(err, "unable to connect to NATS server", "natsURL", cfg.NatsURL)
-		os.Exit(1)
-	}
-
-	publisher, err := messaging.NewNatsPublisher(signalHandler, nc, slogger)
-	if err != nil {
-		setupLog.Error(err, "unable to create NATS publisher")
 		os.Exit(1)
 	}
 
