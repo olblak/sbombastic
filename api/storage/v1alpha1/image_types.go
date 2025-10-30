@@ -1,19 +1,3 @@
-/*
-Copyright 2024.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package v1alpha1
 
 import (
@@ -25,8 +9,8 @@ import (
 // ImageList contains a list of Image
 type ImageList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Image `json:"items"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	Items           []Image `json:"items" protobuf:"bytes,2,rep,name=items"`
 }
 
 // +genclient
@@ -41,23 +25,23 @@ type ImageList struct {
 // Image is the Schema for the images API
 type Image struct {
 	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Metadata of the image
-	ImageMetadata `json:"imageMetadata"`
+	ImageMetadata `json:"imageMetadata" protobuf:"bytes,2,req,name=imageMetadata"`
 	// List of the layers that make the image
-	Layers []ImageLayer `json:"layers,omitempty"`
+	Layers []ImageLayer `json:"layers,omitempty" protobuf:"bytes,3,rep,name=layers"`
 }
 
 // ImageLayer define a layer part of an OCI Image
 type ImageLayer struct {
 	// command is the command that led to the creation
 	// of the layer. The contents are base64 encoded
-	Command string `json:"command"`
+	Command string `json:"command" protobuf:"bytes,1,req,name=command"`
 	// digest is the Hash of the compressed layer
-	Digest string `json:"digest"`
+	Digest string `json:"digest" protobuf:"bytes,2,req,name=digest"`
 	// diffID is the Hash of the uncompressed layer
-	DiffID string `json:"diffID"`
+	DiffID string `json:"diffID" protobuf:"bytes,3,req,name=diffID"`
 }
 
 func (i *Image) GetImageMetadata() ImageMetadata {
