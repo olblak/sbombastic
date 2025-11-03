@@ -49,7 +49,7 @@ type store struct {
 	logger      *slog.Logger
 }
 
-// Returns Versioner associated with this interface.
+// Versioner returns API object versioner associated with this interface.
 func (s *store) Versioner() storage.Versioner {
 	return storage.APIObjectVersioner{}
 }
