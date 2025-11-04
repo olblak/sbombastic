@@ -20,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	storagev1alpha1 "github.com/kubewarden/sbomscanner/api/storage/v1alpha1"
@@ -128,6 +129,13 @@ func testGenerateSBOM(t *testing.T, platform, sha256, expectedSPDXJSON string) {
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(image, registry, scanJob).
+		WithIndex(&storagev1alpha1.SBOM{}, storagev1alpha1.IndexImageMetadataDigest, func(obj client.Object) []string {
+			sbom, ok := obj.(*storagev1alpha1.SBOM)
+			if !ok {
+				return nil
+			}
+			return []string{sbom.GetImageMetadata().Digest}
+		}).
 		Build()
 
 	spdxData, err := os.ReadFile(expectedSPDXJSON)
@@ -204,6 +212,143 @@ func testGenerateSBOM(t *testing.T, platform, sha256, expectedSPDXJSON string) {
 	diff := cmp.Diff(expectedSPDX, generatedSPDX, filter, cmpopts.IgnoreUnexported(spdx.Package{}))
 
 	assert.Empty(t, diff, "SPDX diff mismatch on platform %s\nDiff:\n%s", platform, diff)
+}
+
+func TestGenerateSBOMHandler_Handle_ReuseSBOMWithSameDigest(t *testing.T) {
+	digest := "sha256:1782cafde43390b032f960c0fad3def745fac18994ced169003cb56e9a93c028"
+
+	// SPDX content that we expect to be reused
+	expectedSPDXContent := []byte(`{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0"}`)
+
+	existingSBOM := &storagev1alpha1.SBOM{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "image",
+			Namespace: "default",
+			UID:       "existing-sbom-uid",
+		},
+		ImageMetadata: storagev1alpha1.ImageMetadata{
+			Registry:    "ghcr",
+			RegistryURI: "ghcr.io/kubewarden/sbomscanner/test-assets",
+			Repository:  "golang",
+			Tag:         "1.12-alpine",
+			Platform:    "linux/amd64",
+			Digest:      digest,
+		},
+		SPDX: runtime.RawExtension{Raw: expectedSPDXContent},
+	}
+
+	newImage := &storagev1alpha1.Image{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "new-image",
+			Namespace: "default",
+			UID:       "new-image-uid",
+		},
+		ImageMetadata: storagev1alpha1.ImageMetadata{
+			Registry:    "ghcr",
+			RegistryURI: "ghcr.io/kubewarden/sbomscanner/test-assets",
+			Repository:  "golang",
+			Tag:         "latest", // Different tag
+			Platform:    "linux/amd64",
+			Digest:      digest,
+		},
+	}
+
+	registry := &v1alpha1.Registry{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-registry",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.RegistrySpec{
+			URI: "test.io",
+		},
+	}
+	registryData, err := json.Marshal(registry)
+	require.NoError(t, err)
+
+	scanJob := &v1alpha1.ScanJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-scanjob",
+			Namespace: "default",
+			UID:       "test-scanjob-uid",
+			Annotations: map[string]string{
+				v1alpha1.AnnotationScanJobRegistryKey: string(registryData),
+			},
+		},
+		Spec: v1alpha1.ScanJobSpec{
+			Registry: "test-registry",
+		},
+	}
+
+	scheme := scheme.Scheme
+	err = storagev1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+	err = v1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(existingSBOM, newImage, registry, scanJob).
+		WithIndex(&storagev1alpha1.SBOM{}, storagev1alpha1.IndexImageMetadataDigest, func(obj client.Object) []string {
+			sbom, ok := obj.(*storagev1alpha1.SBOM)
+			if !ok {
+				return nil
+			}
+			return []string{sbom.GetImageMetadata().Digest}
+		}).
+		Build()
+
+	publisher := messagingMocks.NewMockPublisher(t)
+
+	expectedScanMessage, err := json.Marshal(&ScanSBOMMessage{
+		BaseMessage: BaseMessage{
+			ScanJob: ObjectRef{
+				Name:      scanJob.Name,
+				Namespace: scanJob.Namespace,
+				UID:       string(scanJob.UID),
+			},
+		},
+		SBOM: ObjectRef{
+			Name:      newImage.Name,
+			Namespace: newImage.Namespace,
+		},
+	})
+	require.NoError(t, err)
+
+	publisher.On("Publish",
+		mock.Anything,
+		ScanSBOMSubject,
+		fmt.Sprintf("scanSBOM/%s/%s", scanJob.UID, newImage.Name),
+		expectedScanMessage,
+	).Return(nil).Once()
+
+	handler := NewGenerateSBOMHandler(k8sClient, scheme, "/tmp", testTrivyJavaDBRepository, publisher, slog.Default())
+
+	message, err := json.Marshal(&GenerateSBOMMessage{
+		BaseMessage: BaseMessage{
+			ScanJob: ObjectRef{
+				Name:      scanJob.Name,
+				Namespace: scanJob.Namespace,
+				UID:       string(scanJob.UID),
+			},
+		},
+		Image: ObjectRef{
+			Name:      newImage.Name,
+			Namespace: newImage.Namespace,
+		},
+	})
+	require.NoError(t, err)
+
+	err = handler.Handle(t.Context(), &testMessage{data: message})
+	require.NoError(t, err)
+
+	newSBOM := &storagev1alpha1.SBOM{}
+	err = k8sClient.Get(t.Context(), types.NamespacedName{
+		Name:      newImage.Name,
+		Namespace: newImage.Namespace,
+	}, newSBOM)
+	require.NoError(t, err)
+	assert.Equal(t, expectedSPDXContent, newSBOM.SPDX.Raw, "SPDX content should be reused from existing SBOM")
+	assert.Equal(t, newImage.ImageMetadata, newSBOM.ImageMetadata)
+	assert.Equal(t, newImage.UID, newSBOM.GetOwnerReferences()[0].UID)
 }
 
 func TestGenerateSBOMHandler_Handle_StopProcessing(t *testing.T) {
@@ -288,10 +433,16 @@ func TestGenerateSBOMHandler_Handle_StopProcessing(t *testing.T) {
 			require.NoError(t, err)
 			err = v1alpha1.AddToScheme(scheme)
 			require.NoError(t, err)
-
 			k8sClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithRuntimeObjects(test.existingObjects...).
+				WithIndex(&storagev1alpha1.SBOM{}, storagev1alpha1.IndexImageMetadataDigest, func(obj client.Object) []string {
+					sbom, ok := obj.(*storagev1alpha1.SBOM)
+					if !ok {
+						return nil
+					}
+					return []string{sbom.GetImageMetadata().Digest}
+				}).
 				Build()
 
 			publisher := messagingMocks.NewMockPublisher(t)
@@ -389,6 +540,13 @@ func TestGenerateSBOMHandler_Handle_ExistingSBOM(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(image, registry, scanJob, existingSBOM).
+		WithIndex(&storagev1alpha1.SBOM{}, storagev1alpha1.IndexImageMetadataDigest, func(obj client.Object) []string {
+			sbom, ok := obj.(*storagev1alpha1.SBOM)
+			if !ok {
+				return nil
+			}
+			return []string{sbom.GetImageMetadata().Digest}
+		}).
 		Build()
 
 	publisher := messagingMocks.NewMockPublisher(t)
@@ -513,6 +671,13 @@ func TestGenerateSBOMHandler_Handle_PrivateRegistry(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(image, registry, secret, scanJob).
+		WithIndex(&storagev1alpha1.SBOM{}, storagev1alpha1.IndexImageMetadataDigest, func(obj client.Object) []string {
+			sbom, ok := obj.(*storagev1alpha1.SBOM)
+			if !ok {
+				return nil
+			}
+			return []string{sbom.GetImageMetadata().Digest}
+		}).
 		Build()
 
 	publisher := messagingMocks.NewMockPublisher(t)
