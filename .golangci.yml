@@ -71,6 +71,7 @@ linters:
     - goconst # finds repeated strings that could be replaced by a constant
     - gocritic # provides diagnostics that check for bugs, performance and style issues
     - gocyclo # computes and checks the cyclomatic complexity of functions
+    - godoclint # linter for Go documentation practice
     - goprintffuncname # checks that printf-like functions are named with f at the end
     - gosec # inspects source code for security problems
     - govet # reports suspicious constructs, such as Printf calls whose arguments do not align with the format string
@@ -319,6 +320,13 @@ linters:
           # Default: true
           skipRecvDeref: false
 
+    godoclint:
+      default: basic # enables `pkg-doc`, `single-pkg-doc`, `start-with-name`, and `deprecated`
+      enable:
+        # Require all packages to have a godoc.
+        # https://github.com/godoc-lint/godoc-lint?tab=readme-ov-file#require-pkg-doc
+        - require-pkg-doc
+
     govet:
       # Enable all analyzers.
       # Default: false
@@ -496,4 +504,12 @@ linters:
       - path: ^internal/storage/.*\.go$
         linters:
           - dupl
+      # Disable godoclint for test files
+      - path: _test\.go$
+        linters:
+          - godoclint
+      # Disable godoclint for cmd package
+      - path: '^cmd\/.*\.go$'
+        linters:
+          - godoclint
 
