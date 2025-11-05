@@ -1,2 +1,2 @@
-// Package storage manages the interaction with the storage component.
+// Package storage provides the persistence layer for SBOMscanner.
 package storage

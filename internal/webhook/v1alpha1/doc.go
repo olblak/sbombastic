@@ -1,2 +1,2 @@
-// Package v1alpha1 manage the webhook logic for SBOMscanner.
+// Package v1alpha1 contains the controller's webhooks.
 package v1alpha1

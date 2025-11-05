@@ -1,2 +1,2 @@
-// Package install manage installation for storage types for SBOMscanner.
+// Package install manages the installation of storage types for SBOMscanner.
 package install

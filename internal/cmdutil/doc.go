@@ -1,3 +1,2 @@
-// Package cmdutil contains helpers for waiting for resources available
-// and managing logs.
+// Package cmdutil contains helpers used by the cmd pacakge.
 package cmdutil

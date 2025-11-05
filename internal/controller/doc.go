@@ -1,2 +1,2 @@
-// Package controller contains the resources reconciliation logics.
+// Package controller contains the resources reconciliation logic.
 package controller

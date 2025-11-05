@@ -1,2 +1,2 @@
-// Package apiserver manages the initialization with the storage apiserver.
+// Package apiserver contains the API server extension implementation of the SBOMscanner storage component.
 package apiserver

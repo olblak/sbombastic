@@ -1,2 +1,2 @@
-// Package api contains all the APIs of SBOMscanner.
+// Package api contains all the API types of SBOMscanner.
 package api
