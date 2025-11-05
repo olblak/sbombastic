@@ -1,12 +1,12 @@
-// Package v1alpha1 contains API Schema definitions for the sbomscanner v1alpha1 API group
-// +kubebuilder:object:generate=true
-// +groupName=sbomscanner.kubewarden.io
 package v1alpha1
 
 import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
+
+// +kubebuilder:object:generate=true
+// +groupName=sbomscanner.kubewarden.io
 
 var (
 	// GroupVersion is group version used to register these objects
