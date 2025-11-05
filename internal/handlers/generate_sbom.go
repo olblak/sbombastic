@@ -118,9 +118,9 @@ func (h *GenerateSBOMHandler) Handle(ctx context.Context, message messaging.Mess
 		return fmt.Errorf("cannot unmarshal registry data from scan job %s/%s: %w", scanJob.Namespace, scanJob.Name, err)
 	}
 
-	sbom, err := h.generateSBOM(ctx, image, registry, generateSBOMMessage)
+	sbom, err := h.getOrGenerateSBOM(ctx, image, registry, generateSBOMMessage)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get or generate SBOM: %w", err)
 	}
 
 	if err = message.InProgress(); err != nil {
@@ -156,8 +156,70 @@ func (h *GenerateSBOMHandler) Handle(ctx context.Context, message messaging.Mess
 	return nil
 }
 
-// generateSBOM creates a new SBOM using Trivy.
-func (h *GenerateSBOMHandler) generateSBOM(ctx context.Context, image *storagev1alpha1.Image, registry *v1alpha1.Registry, message *GenerateSBOMMessage) (*storagev1alpha1.SBOM, error) {
+// getOrGenerateSBOM checks if an SBOM with the same digest exists and reuses it, or generates a new one.
+func (h *GenerateSBOMHandler) getOrGenerateSBOM(ctx context.Context, image *storagev1alpha1.Image, registry *v1alpha1.Registry, message *GenerateSBOMMessage) (*storagev1alpha1.SBOM, error) {
+	// Check if an SBOM with the same digest already exists
+	existingSBOM, err := h.findSBOMByDigest(ctx, image.GetImageMetadata().Digest, image.Namespace)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("failed to check for existing SBOM: %w", err)
+	}
+
+	var spdxBytes []byte
+	if existingSBOM != nil {
+		h.logger.InfoContext(ctx, "Found existing SBOM with matching digest, reusing content",
+			"sbom", existingSBOM.Name,
+			"digest", image.GetImageMetadata().Digest,
+		)
+		spdxBytes = existingSBOM.SPDX.Raw
+	} else {
+		h.logger.InfoContext(ctx, "No existing SBOM found, generating new one", "digest", image.GetImageMetadata().Digest)
+		spdxBytes, err = h.generateSPDX(ctx, image, registry)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	sbom := &storagev1alpha1.SBOM{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      message.Image.Name,
+			Namespace: message.Image.Namespace,
+			Labels: map[string]string{
+				api.LabelManagedByKey: api.LabelManagedByValue,
+				api.LabelPartOfKey:    api.LabelPartOfValue,
+			},
+		},
+		ImageMetadata: image.GetImageMetadata(),
+		SPDX:          runtime.RawExtension{Raw: spdxBytes},
+	}
+
+	if err := controllerutil.SetControllerReference(image, sbom, h.scheme); err != nil {
+		return nil, fmt.Errorf("failed to set owner reference: %w", err)
+	}
+
+	return sbom, nil
+}
+
+// findSBOMByDigest searches for an existing SBOM with the given digest.
+func (h *GenerateSBOMHandler) findSBOMByDigest(ctx context.Context, digest string, namespace string) (*storagev1alpha1.SBOM, error) {
+	sbomList := &storagev1alpha1.SBOMList{}
+	err := h.k8sClient.List(ctx, sbomList,
+		client.InNamespace(namespace),
+		client.MatchingFields{storagev1alpha1.IndexImageMetadataDigest: digest},
+		client.Limit(1),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find SBOM by digest: %w", err)
+	}
+
+	if len(sbomList.Items) == 0 {
+		return nil, apierrors.NewNotFound(storagev1alpha1.Resource("sbom"), digest)
+	}
+
+	return &sbomList.Items[0], nil
+}
+
+// generateSPDX generates SPDX JSON content for an image using Trivy.
+func (h *GenerateSBOMHandler) generateSPDX(ctx context.Context, image *storagev1alpha1.Image, registry *v1alpha1.Registry) ([]byte, error) {
 	sbomFile, err := os.CreateTemp(h.workDir, "trivy.sbom.*.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary SBOM file: %w", err)
@@ -184,7 +246,7 @@ func (h *GenerateSBOMHandler) generateSBOM(ctx context.Context, image *storagev1
 			if err = os.RemoveAll(dockerConfig); err != nil {
 				h.logger.Error("failed to remove dockerconfig directory", "error", err)
 			}
-			// uset the DOCKER_CONFIG variable so at every run
+			// unset the DOCKER_CONFIG variable so at every run
 			// we start from a clean environment.
 			if err = os.Unsetenv("DOCKER_CONFIG"); err != nil {
 				h.logger.Error("failed to unset DOCKER_CONFIG variable", "error", err)
@@ -216,28 +278,12 @@ func (h *GenerateSBOMHandler) generateSBOM(ctx context.Context, image *storagev1
 		return nil, fmt.Errorf("failed to execute trivy: %w", err)
 	}
 
-	h.logger.DebugContext(ctx, "SBOM generated", "image", image.Name, "namespace", image.Namespace)
+	h.logger.DebugContext(ctx, "SPDX generated", "image", image.Name, "namespace", image.Namespace)
 
 	spdxBytes, err := io.ReadAll(sbomFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read SBOM output: %w", err)
 	}
 
-	sbom := &storagev1alpha1.SBOM{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      message.Image.Name,
-			Namespace: message.Image.Namespace,
-			Labels: map[string]string{
-				api.LabelManagedByKey: api.LabelManagedByValue,
-				api.LabelPartOfKey:    api.LabelPartOfValue,
-			},
-		},
-		ImageMetadata: image.GetImageMetadata(),
-		SPDX:          runtime.RawExtension{Raw: spdxBytes},
-	}
-	if err = controllerutil.SetControllerReference(image, sbom, h.scheme); err != nil {
-		return nil, fmt.Errorf("failed to set owner reference: %w", err)
-	}
-
-	return sbom, nil
+	return spdxBytes, nil
 }
