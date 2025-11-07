@@ -492,5 +492,10 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-// TODO: remove when https://github.com/aquasecurity/trivy/pull/9665 is merged
-replace github.com/aquasecurity/trivy => github.com/fabriziosestito/trivy v0.0.0-20251015050612-618ad6a52a52
+replace (
+	// TODO: remove when https://github.com/aquasecurity/trivy/pull/9665 is released
+	github.com/aquasecurity/trivy => github.com/fabriziosestito/trivy v0.0.0-20251015050612-618ad6a52a52
+
+	// TODO: remove https://github.com/containerd/containerd/issues/12493 is resolved.
+	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.2.1
+)
