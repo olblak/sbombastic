@@ -61,7 +61,7 @@ scms:
     spec:
       user: "{{ .github.author }}"
       email: "{{ .github.email }}"
-      owner: "{{ requiredEnv .github.owner }}"
+      owner: "{{ .github.owner }}"
       repository: "sbomscanner"
       branch: "{{ .github.branch }}"
       commitusingapi: true
@@ -69,5 +69,5 @@ scms:
         type: "chore"
         scope: deps
         title: "update Golang version"
-        hidecredit: true
         footers: "Signed-off-by: SBOMscanner bot <sbomscanner-bot@users.noreply.github.com>"
+        hidecredit: true
